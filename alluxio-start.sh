@@ -21,26 +21,29 @@ BIN=$(cd "$( dirname "$0" )"; pwd)
 
 USAGE="Usage: alluxio-start.sh [-hNw] ACTION [MOPT] [-f]
 Where ACTION is one of:
-  all [MOPT]     \tStart master and all workers.
-  local [MOPT]   \tStart a master and worker locally.
+  all [MOPT]     \tStart master and all proxies and workers.
+  local [MOPT]   \tStart a master, proxy, and worker locally.
   master         \tStart the master on this node.
+  proxy          \tStart the proxy on this node.
+  proxies        \tStart proxies on worker nodes.
   safe           \tScript will run continuously and start the master if it's not running.
   worker [MOPT]  \tStart a worker on this node.
   workers [MOPT] \tStart workers on worker nodes.
   restart_worker \tRestart a failed worker on this node.
   restart_workers\tRestart any failed workers on worker nodes.
+
 MOPT (Mount Option) is one of:
   Mount    \tMount the configured RamFS. Notice: this will format the existing RamFS.
   SudoMount\tMount the configured RamFS using sudo.
            \tNotice: this will format the existing RamFS.
   NoMount  \tDo not mount the configured RamFS.
-           \tNotice: Use NoMount (Linux only) to use tmpFS to avoid sudo requirement.
-  SudoMount is assumed if MOPT is specified.
+           \tNotice: to avoid sudo requirement but using tmpFS in Linux,
+             set ALLUXIO_RAM_FOLDER=/dev/shm on each worker and use NoMount.
+  SudoMount is assumed if MOPT is not specified.
 
 -f  format Journal, UnderFS Data and Workers Folder on master
 -N  do not try to kill prior running masters and/or workers in all or local
 -w  wait for processes to end before returning
--e  run processes exec instead of using nohup
 -h  display this help."
 
 ensure_dirs() {
@@ -56,11 +59,9 @@ get_env() {
   . ${ALLUXIO_LIBEXEC_DIR}/alluxio-config.sh
 }
 
-# The exit status is 0 if ALLUXIO_RAM_FOLDER is mounted as tmpfs or ramfs.
+# Pass ram folder to check as $1
+# Return 0 if ram folder is mounted as tmpfs or ramfs, 1 otherwise
 is_ram_folder_mounted() {
-  if [[ -z ${ALLUXIO_RAM_FOLDER} ]]; then
-    return 1
-  fi
   local mounted_fs=""
   if [[ $(uname -s) == Darwin ]]; then
     mounted_fs=$(mount -t "hfs" | grep '/Volumes/' | cut -d " " -f 3)
@@ -69,8 +70,7 @@ is_ram_folder_mounted() {
   fi
 
   for fs in ${mounted_fs}; do
-    if [[ "${ALLUXIO_RAM_FOLDER}" == "${fs}" || \
-     "${ALLUXIO_RAM_FOLDER}" =~ ^"${fs}"\/.* ]]; then
+    if [[ "${1}" == "${fs}" || "${1}" =~ ^"${fs}"\/.* ]]; then
       return 0
     fi
   done
@@ -79,29 +79,30 @@ is_ram_folder_mounted() {
 }
 
 check_mount_mode() {
-  case "$1" in
+  case $1 in
     Mount);;
     SudoMount);;
     NoMount)
-      is_ram_folder_mounted
+      local tier_alias=$(${BIN}/alluxio getConf alluxio.worker.tieredstore.level0.alias)
+      local tier_path=$(${BIN}/alluxio getConf alluxio.worker.tieredstore.level0.dirs.path)
+      if [[ ${tier_alias} != "MEM" ]]; then
+        # if the top tier is not MEM, skip check
+        return
+      fi
+      is_ram_folder_mounted "${tier_path}"
       if [[ $? -ne 0 ]]; then
         if [[ $(uname -s) == Darwin ]]; then
           # Assuming Mac OS X
           echo "ERROR: NoMount is not supported on Mac OS X." >&2
           echo -e "${USAGE}" >&2
           exit 1
-        else
-          echo "WARNING: Overriding ALLUXIO_RAM_FOLDER to /dev/shm to use tmpFS now."
-          export ALLUXIO_RAM_FOLDER="/dev/shm"
-          # Set env again since some env variables depend on ALLUXIO_RAM_FOLDER.
-          get_env
         fi
       fi
-      if [[ "${ALLUXIO_RAM_FOLDER}" =~ ^"/dev/shm"\/{0,1}$ ]]; then
-        echo "WARNING: Using tmpFS which is not guaranteed to be in memory."
+      if [[ "${tier_path}" =~ ^"/dev/shm"\/{0,1}$ ]]; then
+        echo "WARNING: Using tmpFS does not guarantee data to be stored in memory."
         echo "WARNING: Check vmstat for memory statistics (e.g. swapping)."
       fi
-    ;;
+      ;;
     *)
       if [[ -z $1 ]]; then
         echo "This command requires a mount mode be specified" >&2
@@ -118,7 +119,7 @@ do_mount() {
   MOUNT_FAILED=0
   case "$1" in
     Mount|SudoMount)
-      ${LAUNCHER} ${BIN}/alluxio-mount.sh $1
+      ${LAUNCHER} "${BIN}/alluxio-mount.sh" $1
       MOUNT_FAILED=$?
       ;;
     NoMount)
@@ -136,11 +137,6 @@ stop() {
 
 
 start_master() {
-  MASTER_ADDRESS=${ALLUXIO_MASTER_HOSTNAME}
-  if [[ -z ${ALLUXIO_MASTER_HOSTNAME} ]]; then
-    MASTER_ADDRESS=localhost
-  fi
-
   if [[ -z ${ALLUXIO_MASTER_JAVA_OPTS} ]]; then
     ALLUXIO_MASTER_JAVA_OPTS=${ALLUXIO_JAVA_OPTS}
   fi
@@ -149,16 +145,21 @@ start_master() {
     ${LAUNCHER} ${BIN}/alluxio format
   fi
 
-  echo "Starting master @ ${MASTER_ADDRESS}. Logging to ${ALLUXIO_LOGS_DIR}"
-  if [[ "${foreground}" ]]; then
-    exec ${JAVA} -cp ${CLASSPATH} \
-     ${ALLUXIO_MASTER_JAVA_OPTS} \
-     alluxio.master.AlluxioMaster
-  else
-    (nohup ${JAVA} -cp ${CLASSPATH} \
-     ${ALLUXIO_MASTER_JAVA_OPTS} \
-     alluxio.master.AlluxioMaster > ${ALLUXIO_LOGS_DIR}/master.out 2>&1) &
+  echo "Starting master @ $(hostname -f). Logging to ${ALLUXIO_LOGS_DIR}"
+  (nohup ${JAVA} -cp ${CLASSPATH} \
+   ${ALLUXIO_MASTER_JAVA_OPTS} \
+   alluxio.master.AlluxioMaster > ${ALLUXIO_LOGS_DIR}/master.out 2>&1) &
+}
+
+start_proxy() {
+  if [[ -z ${ALLUXIO_PROXY_JAVA_OPTS} ]]; then
+    ALLUXIO_PROXY_JAVA_OPTS=${ALLUXIO_JAVA_OPTS}
   fi
+
+  echo "Starting proxy @ $(hostname -f). Logging to ${ALLUXIO_LOGS_DIR}"
+  (nohup ${JAVA} -cp ${CLASSPATH} \
+   ${ALLUXIO_PROXY_JAVA_OPTS} \
+   alluxio.proxy.AlluxioProxy > ${ALLUXIO_LOGS_DIR}/proxy.out 2>&1) &
 }
 
 start_worker() {
@@ -198,6 +199,18 @@ restart_worker() {
   fi
 }
 
+restart_workers() {
+  ${LAUNCHER} "${BIN}/alluxio-workers.sh" "${BIN}/alluxio-start.sh" "restart_worker"
+}
+
+start_proxies() {
+  ${LAUNCHER} "${BIN}/alluxio-workers.sh" "${BIN}/alluxio-start.sh" "proxy"
+}
+
+start_workers() {
+  ${LAUNCHER} "${BIN}/alluxio-workers.sh" "${BIN}/alluxio-start.sh" "worker" $1
+}
+
 run_safe() {
   while [ 1 ]
   do
@@ -218,7 +231,7 @@ main() {
   # ensure log/data dirs
   ensure_dirs
 
-  while getopts "hNwe" o; do
+  while getopts "hNw" o; do
     case "${o}" in
       h)
         echo -e "${USAGE}"
@@ -275,40 +288,47 @@ main() {
   case "${ACTION}" in
     all)
       if [[ "${killonstart}" != "no" ]]; then
-        stop ${BIN}
+        stop
       fi
       start_master "${FORMAT}"
+      start_proxy
       sleep 2
-
-      ${LAUNCHER} "${BIN}/alluxio-workers.sh" "${BIN}/alluxio-start.sh" "worker" "${MOPT}"
+      start_workers "${MOPT}"
+      start_proxies
       ;;
     local)
       if [[ "${killonstart}" != "no" ]]; then
-        stop ${BIN}
+        stop
         sleep 1
       fi
       start_master "${FORMAT}"
       sleep 2
       start_worker "${MOPT}"
+      start_proxy
       ;;
     master)
       start_master "${FORMAT}"
       ;;
-    worker)
-      start_worker "${MOPT}"
+    proxy)
+      start_proxy
       ;;
-    safe)
-      run_safe
-      ;;
-    workers)
-      ${LAUNCHER} "${BIN}/alluxio-workers.sh" "${BIN}/alluxio-start.sh" "worker" "${MOPT}" \
-       "${ALLUXIO_MASTER_HOSTNAME}"
+    proxies)
+      start_proxies
       ;;
     restart_worker)
       restart_worker
       ;;
     restart_workers)
-      ${LAUNCHER} "${BIN}/alluxio-workers.sh" "${BIN}/alluxio-start.sh" restart_worker
+      restart_workers
+      ;;
+    safe)
+      run_safe
+      ;;
+    worker)
+      start_worker "${MOPT}"
+      ;;
+    workers)
+      start_workers "${MOPT}"
       ;;
     *)
     echo "Error: Invalid ACTION: ${ACTION}" >&2

@@ -1,12 +1,11 @@
 FROM java:openjdk-7-jdk
 MAINTAINER Oscar Morante <oscar.morante@mirada.tv>
 
-#RUN mkdir -p /opt/alluxio \
-    #&& curl http://downloads.alluxio.org/downloads/files/${ALLUXIO_VERSION}/alluxio-${ALLUXIO_VERSION}-bin.tar.gz \
-    #| tar zx --strip-components=1 -C /opt/alluxio
+ENV ALLUXIO_VERSION=1.5.0-SNAPSHOT
 
-ADD alluxio-1.3.1-SNAPSHOT.tar.gz /opt
-RUN mv /opt/alluxio-1.3.1-SNAPSHOT /opt/alluxio
+COPY alluxio-$ALLUXIO_VERSION.tar.gz /opt
+RUN tar zxvf /opt/alluxio-$ALLUXIO_VERSION.tar.gz -C /opt && \
+    mv /opt/alluxio-$ALLUXIO_VERSION /opt/alluxio
 COPY alluxio-env.sh /opt/alluxio/conf/alluxio-env.sh
 COPY alluxio-start.sh /opt/alluxio/bin/alluxio-start.sh
 COPY log4j.properties /opt/alluxio/conf/log4j.properties
