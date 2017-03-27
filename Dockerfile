@@ -1,11 +1,13 @@
 FROM java:openjdk-7-jdk
 MAINTAINER Oscar Morante <oscar.morante@mirada.tv>
 
-ENV ALLUXIO_VERSION=1.5.0-SNAPSHOT
+ARG ALLUXIO_VERSION
+ENV ALLUXIO_VERSION=${ALLUXIO_VERSION}
 
 COPY alluxio-$ALLUXIO_VERSION.tar.gz /opt
 RUN tar zxvf /opt/alluxio-$ALLUXIO_VERSION.tar.gz -C /opt && \
-    mv /opt/alluxio-$ALLUXIO_VERSION /opt/alluxio
+    mv /opt/alluxio-$ALLUXIO_VERSION /opt/alluxio && \
+    rm /opt/alluxio-$ALLUXIO_VERSION.tar.gz
 COPY alluxio-env.sh /opt/alluxio/conf/alluxio-env.sh
 COPY alluxio-start.sh /opt/alluxio/bin/alluxio-start.sh
 COPY log4j.properties /opt/alluxio/conf/log4j.properties

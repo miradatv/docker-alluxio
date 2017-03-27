@@ -1,8 +1,14 @@
-#!/bin/sh
+#!/bin/bash
 export ECR=606039442951.dkr.ecr.us-east-1.amazonaws.com
-export VERSION=1.5.0-SNAPSHOT
+export VERSION=1.3.1-SNAPSHOT
 
-docker build -t alluxio .
+download_release_file () { wget -qc --show-progress https://github.com/miradatv/$1/releases/download/$2/$3; }
+
+download_release_file alluxio $VERSION alluxio-$VERSION.tar.gz
+
+docker build \
+  --build-arg ALLUXIO_VERSION=$VERSION \
+  -t alluxio .
 
 $(aws ecr get-login --region us-east-1)
 docker tag alluxio:latest $ECR/alluxio:$VERSION
