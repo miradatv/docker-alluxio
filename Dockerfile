@@ -4,6 +4,8 @@ MAINTAINER Oscar Morante <oscar.morante@mirada.tv>
 ARG ALLUXIO_VERSION
 ENV ALLUXIO_VERSION=${ALLUXIO_VERSION}
 
+RUN apt-get update && apt-get install -y jq && apt-get autoremove && apt-get clean
+
 COPY alluxio-$ALLUXIO_VERSION.tar.gz /opt
 RUN tar zxvf /opt/alluxio-$ALLUXIO_VERSION.tar.gz -C /opt && \
     mv /opt/alluxio-$ALLUXIO_VERSION /opt/alluxio && \
