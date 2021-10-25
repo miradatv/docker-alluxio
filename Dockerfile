@@ -1,6 +1,6 @@
 FROM debian:9.5
 
-ENV ALLUXIO_VERSION=1.8.1
+ENV ALLUXIO_VERSION=1.8.2
 
 RUN apt-get update \
 	&& apt-get install -y wget curl htop procps net-tools vim nano jq openjdk-8-jdk \
