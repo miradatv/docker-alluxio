@@ -7,9 +7,9 @@ usage() {
     echo "        ${0}  -e tvi -p perfil-pruebas"
 }
 
-MIRADA_REVISION=1
+MIRADA_REVISION=2
 IMAGE_NAME=alluxio
-IMAGE_TAG=1.8.2-$MIRADA_REVISION
+IMAGE_TAG=2.8.1-$MIRADA_REVISION
 
 POSITIONAL=()
 while [[ $# -gt 0 ]]
@@ -60,6 +60,6 @@ fi
 docker build -t $IMAGE_NAME:$IMAGE_TAG .
 
 
-$(aws ecr get-login --no-include-email --region $AWS_REGION --profile $AWS_PROFILE)
+#$(aws ecr get-login --no-include-email --region $AWS_REGION --profile $AWS_PROFILE)
 docker tag $IMAGE_NAME:$IMAGE_TAG $ECR_URN/$IMAGE_NAME:$IMAGE_TAG
 docker push $ECR_URN/$IMAGE_NAME:$IMAGE_TAG
